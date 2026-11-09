@@ -62,6 +62,19 @@ html = html.replace(/<script src="([\w.-]+\.js)"><\/script>/g, (_, f) =>
   `<script>\n${guard(f, read(f), "script")}</script>`);
 if (/<(script|link)[^>]+(src|href)=/.test(html)) throw new Error("インライン化されていない外部参照が残っている");
 
+// 埋め込んだもののライセンス表示（PDF.js 本体のライセンスはスクリプト冒頭のコメントに含まれる）
+const notices = [
+  ["diff-pdf", "LICENSE"],
+  ["PDF.js CMaps", `${VENDOR}/cmaps/LICENSE`],
+  ["PDF.js standard fonts (Foxit)", `${VENDOR}/standard_fonts/LICENSE_FOXIT`],
+  ["PDF.js standard fonts (Liberation)", `${VENDOR}/standard_fonts/LICENSE_LIBERATION`],
+].map(([name, f]) => {
+  const t = read(f);
+  if (/<!--|--!?>/.test(t)) throw new Error(`${f} に HTML コメントを閉じる文字列が含まれている`);
+  return `===== ${name} =====\n${t.trim()}\n`;
+});
+html = replaceOnce(html, /<html lang="ja">\n/, (m) => `${m}<!--\n${notices.join("\n")}-->\n`);
+
 mkdirSync(join(root, "dist"), { recursive: true });
 writeFileSync(join(root, "dist/diff-pdf.html"), html);
 console.log(`dist/diff-pdf.html (${(html.length / 1024 / 1024).toFixed(1)} MB, CMap ${Object.keys(cmaps).length}, フォント ${Object.keys(fonts).length})`);

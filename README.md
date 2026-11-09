@@ -63,3 +63,8 @@ node --test test/*.test.js  # 差分計算・段組み・画像比較のテス�
 | `build.mjs` | 単一HTML版のビルド |
 | `test/` | `diff.js`・`layout.js`・`visual.js` のテスト |
 | `vendor/pdfjs/` | PDF.js 3.11.174（`pdfjs-dist` の `build/pdf.min.js`・`build/pdf.worker.min.js`・`cmaps/`・`standard_fonts/`、Apache-2.0 ほか各 LICENSE 参照） |
+
+## ライセンス
+
+[MIT License](LICENSE)。ただし `vendor/pdfjs/` の PDF.js は Apache License 2.0（`vendor/pdfjs/LICENSE`）、
+同梱の CMap・標準フォントはそれぞれのディレクトリ内の LICENSE ファイルに従う。
