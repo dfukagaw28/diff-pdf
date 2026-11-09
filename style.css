@@ -46,3 +46,4 @@ tr.cur td.del,tr.cur td.add{outline:2px solid var(--acc);outline-offset:-2px}
 #pageList button.ch{border-color:#d14343;color:#d14343}
 @media (max-width:760px){.files{grid-template-columns:1fr}.canv{grid-template-columns:1fr}td.n{width:44px}}
 h1 .dl{margin-left:12px;font-size:12px;font-weight:normal;color:var(--acc)}
+footer{padding:32px 16px 24px;font-size:13px;color:var(--mut)}
