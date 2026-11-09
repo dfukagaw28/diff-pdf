@@ -27,7 +27,8 @@ const pdfWorker=new pdfjsLib.PDFWorker({port:new Worker(WORKER_URL)}); // 共有
 const loadSeq={A:0,B:0};
 
 const docs={A:null,B:null}, names={A:"",B:""};
-let lines={A:null,B:null};
+let pages={A:null,B:null}; // ページごとのテキスト項目（layout.js の形式）
+let pageAlign=null;        // テキスト差分から求めたページの対応 [{a,b}]（片方のみは null）
 const status=t=>$("#status").textContent=t;
 
 /* ---------- file input ---------- */
@@ -49,7 +50,7 @@ async function load(k,file){
   try{
     const seq=++loadSeq[k];
     const data=new Uint8Array(await file.arrayBuffer());
-    const old=docs[k];docs[k]=null;lines[k]=null;
+    const old=docs[k];docs[k]=null;pages[k]=null;pageAlign=null;
     if(old)await old.destroy().catch(()=>{});
     const doc=await pdfjsLib.getDocument({worker:pdfWorker,data,CMapReaderFactory:CMapF,StandardFontDataFactory:FontF,useWorkerFetch:false,cMapPacked:true,isEvalSupported:false}).promise;
     if(seq!==loadSeq[k]){doc.destroy();return}
@@ -57,8 +58,8 @@ async function load(k,file){
     box.querySelector("span").textContent=`${file.name}（${docs[k].numPages}ページ）`;box.classList.add("loaded");
     const ex=await extract(doc,k);
     if(seq!==loadSeq[k])return;
-    lines[k]=ex;
-    if(docs.A&&docs.B){runText();renderVisual();$("#pageList").innerHTML=""}
+    pages[k]=ex;
+    if(docs.A&&docs.B){$("#pgA").value=$("#pgB").value=1;runText();renderVisual();$("#pageList").innerHTML=""}
     else status("もう一方のPDFを選んでください");
   }catch(e){box.querySelector("span").textContent="読み込み失敗: "+e.message;console.error(e)}
 }
@@ -70,26 +71,27 @@ async function extract(doc,k){
     status(`${k}: テキスト抽出中 ${p}/${doc.numPages}`);
     const page=await doc.getPage(p);
     const tc=await page.getTextContent();
-    let cur="",lastY=null;
-    const flush=()=>{if(cur.trim()!=="")out.push({t:cur.replace(/\s+$/,""),p});cur=""};
+    const items=[];
     for(const it of tc.items){
       if(it.str===undefined)continue;
-      const y=it.transform[5];
-      if(lastY!==null&&Math.abs(y-lastY)>Math.max(2,(it.height||10)*0.5)&&cur!=="")flush();
-      cur+=it.str;lastY=y;
-      if(it.hasEOL)flush();
+      const t=it.transform;
+      items.push({s:it.str,x:t[4],y:t[5],w:it.width,h:it.height,fs:Math.hypot(t[2],t[3]),eol:it.hasEOL,
+        // 縦書き・回転した文字（このページは段組みの解析をしない）
+        vert:!!(tc.styles[it.fontName]&&tc.styles[it.fontName].vertical)||t[0]<=0||Math.abs(t[1])>0.01*Math.abs(t[0])});
     }
-    flush();page.cleanup();
+    out.push(items);page.cleanup();
   }
   return out;
+}
+// 比較する行の一覧 [{t, p: ページ番号}]
+function linesOf(k){
+  const cols=$("#optCols").checked;
+  return pages[k].flatMap((items,i)=>pageLines(items,cols).map(t=>({t,p:i+1})));
 }
 
 /* ---------- text diff ---------- */
 function norm(s){
-  if($("#optNfkc").checked)s=s.normalize("NFKC");
-  if($("#optWs").checked)s=s.replace(/[\s　]+/g,"");
-  if($("#optCase").checked)s=s.toLowerCase();
-  return s;
+  return normalize(s,{nfkc:$("#optNfkc").checked,ws:$("#optWs").checked,ci:$("#optCase").checked});
 }
 function prep(L){
   if(!$("#optJoin").checked)return L;
@@ -120,13 +122,17 @@ function inline(a,b){
 
 let changeRows=[],curChange=-1;
 function runText(){
-  if(!lines.A||!lines.B)return;
+  if(!pages.A||!pages.B)return;
   status("差分計算中…");
   setTimeout(()=>{
-    if(!lines.A||!lines.B)return; // 待機中にPDFが読み直された
-    const LA=prep(lines.A),LB=prep(lines.B);
+    if(!pages.A||!pages.B)return; // 待機中にPDFが読み直された
+    const LA=prep(linesOf("A")),LB=prep(linesOf("B"));
     const ids=new Map(),id=s=>{s=norm(s);if(!ids.has(s))ids.set(s,ids.size);return ids.get(s)};
     const ops=diffLines(LA.map(l=>id(l.t)),LB.map(l=>id(l.t)));
+    // 一致した行の数でページを対応付ける（見た目の差分で使う）
+    const w=new Map();
+    for(const[o,i,j]of ops)if(o===0){const key=`${LA[i].p},${LB[j].p}`;w.set(key,(w.get(key)||0)+1)}
+    pageAlign=alignPages(pages.A.length,pages.B.length,w);
     // build rows
     const rows=[];let dels=[],adds=[];
     const flushH=()=>{
@@ -185,7 +191,7 @@ function jump(d){
 }
 $("#next").onclick=()=>jump(1);$("#prev").onclick=()=>jump(-1);
 document.addEventListener("keydown",e=>{if(e.target.tagName==="INPUT"&&e.target.type!=="checkbox")return;if(e.key==="n"||e.key==="j")jump(1);if(e.key==="p"||e.key==="k")jump(-1)});
-for(const id of["optWs","optNfkc","optCase","optJoin","optOnly"])$("#"+id).onchange=runText;
+for(const id of["optWs","optNfkc","optCase","optJoin","optOnly","optCols"])$("#"+id).onchange=runText;
 
 /* ---------- tabs ---------- */
 document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{
@@ -202,35 +208,38 @@ async function rasterize(doc,n,scale){
   const ctx=c.getContext("2d",{willReadFrequently:true});ctx.fillStyle="#fff";ctx.fillRect(0,0,c.width,c.height);
   await page.render({canvasContext:ctx,viewport:vp}).promise;page.cleanup();return c;
 }
-function pixelDiff(ca,cb,thr,out){
-  const w=Math.max(ca.width,cb.width),h=Math.max(ca.height,cb.height);
-  const get=c=>{const t=document.createElement("canvas");t.width=w;t.height=h;const x=t.getContext("2d",{willReadFrequently:true});x.fillStyle="#fff";x.fillRect(0,0,w,h);x.drawImage(c,0,0);return x.getImageData(0,0,w,h).data};
-  const A=get(ca),B=get(cb);let diff=0;
-  const img=out?new ImageData(w,h):null,D=img&&img.data;
-  for(let i=0;i<A.length;i+=4){
-    const la=(A[i]*299+A[i+1]*587+A[i+2]*114)/1000,lb=(B[i]*299+B[i+1]*587+B[i+2]*114)/1000;
-    const dc=Math.abs(A[i]-B[i])+Math.abs(A[i+1]-B[i+1])+Math.abs(A[i+2]-B[i+2]);
-    if(dc>thr*1.5){diff++;if(D){if(la<lb){D[i]=220;D[i+1]=50;D[i+2]=50}else{D[i]=40;D[i+1]=160;D[i+2]=80}D[i+3]=255}}
-    else if(D){const g=235+(Math.min(la,lb)/255)*20;D[i]=D[i+1]=D[i+2]=Math.min(255,la<250?200+la*0.2:g);D[i+3]=255}
-  }
-  if(out){out.width=w;out.height=h;out.getContext("2d").putImageData(img,0,0)}
-  return diff/(w*h);
+// 2 枚のキャンバスを同じ大きさの RGBA にそろえて比べる（visual.js）。null（そのページがない）は白紙として扱う
+function diffCanvases(ca,cb,thr,out){
+  const w=Math.max(ca?ca.width:1,cb?cb.width:1),h=Math.max(ca?ca.height:1,cb?cb.height:1);
+  const get=c=>{const t=document.createElement("canvas");t.width=w;t.height=h;const x=t.getContext("2d",{willReadFrequently:true});x.fillStyle="#fff";x.fillRect(0,0,w,h);if(c)x.drawImage(c,0,0);return x.getImageData(0,0,w,h).data};
+  const r=compareImages(get(ca),get(cb),w,h,thr,{shift:$("#optShift").checked,draw:!!out});
+  if(out){out.width=w;out.height=r.out.h;out.getContext("2d").putImageData(new ImageData(r.out.data,w,r.out.h),0,0)}
+  return r.ratio;
 }
+// ページ番号の入力欄。空欄は「そのページなし」（片方にしかないページを見るとき）
+const pgOf=(id,n)=>{const v=$(id).value.trim();return v===""?null:Math.min(Math.max(1,Math.round(+v)||1),n)};
+// 自動対応が有効なら、テキスト差分から求めたページの組を使う
+const autoPairs=()=>$("#optAuto").checked&&pageAlign||null;
 let vToken=0,scanToken=0;
 async function renderVisual(){
   const A=docs.A,B=docs.B;
   if(!A||!B||!$("#v-visual").classList.contains("on"))return;
   const tok=++vToken,alive=()=>tok===vToken&&docs.A===A&&docs.B===B;
-  const pa=Math.min(Math.max(1,+$("#pgA").value||1),A.numPages),pb=Math.min(Math.max(1,+$("#pgB").value||1),B.numPages);
-  $("#pgA").max=A.numPages;$("#pgB").max=B.numPages;$("#pgA").value=pa;$("#pgB").value=pb;
+  const pa=pgOf("#pgA",A.numPages),pb=pgOf("#pgB",B.numPages);
+  $("#pgA").max=A.numPages;$("#pgB").max=B.numPages;$("#pgA").value=pa??"";$("#pgB").value=pb??"";
+  if(pa===null&&pb===null){$("#vinfo").textContent="ページ番号を入力してください";return}
   $("#vinfo").textContent="描画中…";
   try{
     const scale=Math.min(2.5,Math.max(1.2,devicePixelRatio*1.2));
-    const [ca,cb]=await Promise.all([rasterize(A,pa,scale),rasterize(B,pb,scale)]);
+    const [ca,cb]=await Promise.all([pa&&rasterize(A,pa,scale),pb&&rasterize(B,pb,scale)]);
     if(!alive())return;
-    for(const[src,dst]of[[ca,"#cA"],[cb,"#cB"]]){const d=$(dst);d.width=src.width;d.height=src.height;d.getContext("2d").drawImage(src,0,0)}
-    const r=pixelDiff(ca,cb,+$("#thr").value,$("#cD"));
-    $("#vinfo").textContent=`A p${pa}/${A.numPages} ⇔ B p${pb}/${B.numPages}：差分ピクセル ${(r*100).toFixed(2)}%`;
+    for(const[src,dst]of[[ca,"#cA"],[cb,"#cB"]]){
+      const d=$(dst),o=src||ca||cb,x=d.getContext("2d");d.width=o.width;d.height=o.height;
+      if(src)x.drawImage(src,0,0);else{x.fillStyle="#fff";x.fillRect(0,0,d.width,d.height)}
+    }
+    const r=diffCanvases(ca,cb,+$("#thr").value,$("#cD"));
+    const side=(k,p,n)=>p?`${k} p${p}/${n}`:`${k} なし`;
+    $("#vinfo").textContent=`${side("A",pa,A.numPages)} ⇔ ${side("B",pb,B.numPages)}：差分ピクセル ${(r*100).toFixed(2)}%`;
   }catch(e){
     if(!alive())return; // 読み直し・再描画で打ち切られた
     $("#vinfo").textContent="描画失敗: "+(e&&e.message||e);console.error(e);
@@ -238,30 +247,47 @@ async function renderVisual(){
 }
 const vm=()=>{const one=$("#vmode").value==="1";$("#canv").classList.toggle("one",one);$("#cA").parentNode.style.display=$("#cB").parentNode.style.display=one?"none":""};
 $("#vmode").onchange=vm;
-$("#pgA").onchange=$("#pgB").onchange=$("#thr").onchange=renderVisual;
-const step=d=>{$("#pgA").value=+$("#pgA").value+d;$("#pgB").value=+$("#pgB").value+d;renderVisual()};
+const setView=(a,b)=>{$("#pgA").value=a??"";$("#pgB").value=b??"";renderVisual()};
+$("#pgA").onchange=()=>{
+  const P=autoPairs(),a=+$("#pgA").value,e=P&&P.find(e=>e.a===a);
+  if(e)$("#pgB").value=e.b??"";
+  renderVisual();
+};
+$("#pgB").onchange=$("#thr").onchange=$("#optShift").onchange=renderVisual;
+const step=d=>{
+  const a=$("#pgA").value===""?null:+$("#pgA").value,b=$("#pgB").value===""?null:+$("#pgB").value;
+  const P=autoPairs();
+  if(!P){setView((a??1)+d,(b??1)+d);return}
+  let i=P.findIndex(e=>e.a===a&&e.b===b);
+  if(i>=0)i=Math.min(Math.max(0,i+d),P.length-1);
+  else{i=P.findIndex(e=>a!==null?e.a!==null&&e.a>=a:e.b!==null&&e.b>=b);if(i<0)i=P.length-1}
+  setView(P[i].a,P[i].b);
+};
 $("#pgPrev").onclick=()=>step(-1);$("#pgNext").onclick=()=>step(1);
+$("#optAuto").onchange=()=>{$("#pageList").innerHTML="";scanToken++};
 $("#scanAll").onclick=async()=>{
   const A=docs.A,B=docs.B;
   if(!A||!B)return;
   // 再クリックやPDFの読み直しで scanToken／docs が変わったら、この走査は打ち切る
   const tok=++scanToken,alive=()=>tok===scanToken&&docs.A===A&&docs.B===B;
-  const n=Math.max(A.numPages,B.numPages),list=$("#pageList");list.innerHTML="";let changed=0;
+  const P=autoPairs()||Array.from({length:Math.max(A.numPages,B.numPages)},(_,i)=>({a:i<A.numPages?i+1:null,b:i<B.numPages?i+1:null}));
+  const list=$("#pageList");list.innerHTML="";let changed=0;
   try{
-    for(let p=1;p<=n;p++){
-      $("#vinfo").textContent=`走査中 ${p}/${n}`;
+    for(const[i,{a,b}]of P.entries()){
+      $("#vinfo").textContent=`走査中 ${i+1}/${P.length}`;
       const btn=document.createElement("button");btn.className="btn";
-      if(p>A.numPages||p>B.numPages){btn.textContent=`p${p} 片方のみ`;btn.classList.add("ch");changed++}
-      else{const[ca,cb]=await Promise.all([rasterize(A,p,.6),rasterize(B,p,.6)]);
+      const label=a===b?`p${a}`:a&&b?`A${a}⇔B${b}`:a?`A${a}のみ`:`B${b}のみ`;
+      if(!a||!b){btn.textContent=label;btn.classList.add("ch");changed++}
+      else{const[ca,cb]=await Promise.all([rasterize(A,a,.6),rasterize(B,b,.6)]);
         if(!alive())return;
-        const r=pixelDiff(ca,cb,+$("#thr").value,null);
-        btn.textContent=r>0?`p${p} ${(r*100).toFixed(1)}%`:`p${p} ✓`;if(r>0){btn.classList.add("ch");changed++}}
-      btn.onclick=()=>{$("#pgA").value=Math.min(p,A.numPages);$("#pgB").value=Math.min(p,B.numPages);renderVisual()};
+        const r=diffCanvases(ca,cb,+$("#thr").value,null);
+        btn.textContent=r>0?`${label} ${(r*100).toFixed(1)}%`:`${label} ✓`;if(r>0){btn.classList.add("ch");changed++}}
+      btn.onclick=()=>setView(a,b);
       list.appendChild(btn);
     }
-    $("#vinfo").textContent=`${n}ページ中 ${changed}ページに差分`;
+    $("#vinfo").textContent=`${P.length}ページ中 ${changed}ページに差分`;
   }catch(e){
     if(!alive())return;
-    $("#vinfo").textContent=`走査失敗（p${list.children.length+1}）: `+(e&&e.message||e);console.error(e);
+    $("#vinfo").textContent=`走査失敗（${list.children.length+1}件目）: `+(e&&e.message||e);console.error(e);
   }
 };

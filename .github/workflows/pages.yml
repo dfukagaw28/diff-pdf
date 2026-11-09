@@ -28,7 +28,7 @@ jobs:
       - name: Assemble site
         run: |
           mkdir _site
-          cp -r index.html style.css diff.js app.js vendor _site/
+          cp -r index.html style.css *.js vendor _site/
           cp dist/diff-pdf.html _site/
       - uses: actions/upload-pages-artifact@v3
         with:

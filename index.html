@@ -18,10 +18,11 @@
   <div class="bar">
     <div class="tabs"><button data-v="text" class="on">テキスト差分</button><button data-v="visual">見た目の差分</button></div>
     <span id="textOpts">
-      <label><input type="checkbox" id="optWs" checked>空白を無視</label>
+      <label title="英数字の単語の間の空白は区切りとして残す"><input type="checkbox" id="optWs" checked>空白の違いを無視</label>
       <label><input type="checkbox" id="optNfkc" checked>全角/半角を同一視</label>
       <label><input type="checkbox" id="optCase">大小文字を無視</label>
       <label><input type="checkbox" id="optJoin">行を連結して比較</label>
+      <label title="文字の位置から段組みを判定し、段ごとに上から読む"><input type="checkbox" id="optCols" checked>段組みを考慮</label>
       <label><input type="checkbox" id="optOnly" checked>変更箇所のみ</label>
       <button class="btn" id="prev">▲ 前</button><button class="btn" id="next">▼ 次</button>
     </span>
@@ -35,6 +36,8 @@
       <span>A ページ <input type="number" id="pgA" min="1" value="1"></span>
       <span>B ページ <input type="number" id="pgB" min="1" value="1"></span>
       <button class="btn" id="pgPrev">← 前</button><button class="btn" id="pgNext">次 →</button>
+      <label title="テキスト差分の結果から、A と B のページを対応付ける（ページの挿入・削除に追従）"><input type="checkbox" id="optAuto" checked>ページを自動対応</label>
+      <label title="行の挿入・削除によるページ内の上下のずれを補正して比べる"><input type="checkbox" id="optShift" checked>ずれを補正</label>
       <label>表示 <select id="vmode"><option value="3">A / B / 差分</option><option value="1">差分のみ</option></select></label>
       <label>感度 <input type="range" id="thr" min="4" max="120" value="32"></label>
       <button class="btn" id="scanAll">全ページを走査</button>
@@ -50,6 +53,8 @@
 </main>
 <script src="vendor/pdfjs/pdf.min.js"></script>
 <script src="diff.js"></script>
+<script src="layout.js"></script>
+<script src="visual.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

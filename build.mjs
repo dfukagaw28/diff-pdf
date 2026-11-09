@@ -57,10 +57,9 @@ html = replaceOnce(html, /<script src="vendor\/pdfjs\/pdf\.min\.js"><\/script>/,
   `<script type="text/plain" id="pdfjs-worker">${guard("pdf.worker.min.js", read(`${VENDOR}/pdf.worker.min.js`), "script")}</script>\n` +
   `<script>${guard("pdf.min.js", read(`${VENDOR}/pdf.min.js`), "script")}</script>\n` +
   `<script>const CMAPS=${JSON.stringify(cmaps)};\nconst FONTS=${JSON.stringify(fonts)};</script>`);
-for (const f of ["diff.js", "app.js"]) {
-  html = replaceOnce(html, new RegExp(`<script src="${f.replace(".", "\\.")}"></script>`), () =>
-    `<script>\n${guard(f, read(f), "script")}</script>`);
-}
+// 残りの <script src="*.js">（diff.js・layout.js・visual.js・app.js など）を順にインライン化
+html = html.replace(/<script src="([\w.-]+\.js)"><\/script>/g, (_, f) =>
+  `<script>\n${guard(f, read(f), "script")}</script>`);
 if (/<(script|link)[^>]+(src|href)=/.test(html)) throw new Error("インライン化されていない外部参照が残っている");
 
 mkdirSync(join(root, "dist"), { recursive: true });

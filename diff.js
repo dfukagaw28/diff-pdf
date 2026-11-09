@@ -67,4 +67,17 @@ function diffLines(a,b){
   return ops;
 }
 
-if(typeof module!=="undefined")module.exports={myers,diffLines,MAX_D};
+/* ---------- 比較用の正規化 ----------
+ * o.nfkc: 全角/半角を同一視、o.ci: 大小文字を無視、
+ * o.ws: 空白の違いを無視。ただし英数字の単語の間の空白は 1 つの区切りとして残す
+ *       （"a b" と "ab" は別物。日本語の文字の間や記号の前後の空白は無視する）。 */
+const WORDCH=/[\p{L}\p{N}]/u, CJK=/[\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Hangul}]/u;
+const isWordCh=c=>c!==undefined&&WORDCH.test(c)&&!CJK.test(c);
+function normalize(s,o){
+  if(o.nfkc)s=s.normalize("NFKC");
+  if(o.ws)s=s.replace(/\s+/g," ").trim().replace(/ /g,(m,i,str)=>isWordCh(str[i-1])&&isWordCh(str[i+1])?" ":"");
+  if(o.ci)s=s.toLowerCase();
+  return s;
+}
+
+if(typeof module!=="undefined")module.exports={myers,diffLines,MAX_D,normalize};
